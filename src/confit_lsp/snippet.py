@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Callable, overload
 
 from lsprotocol.types import Location
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 
 from .inspection import get_function_location, get_pydantic_input_model
 
@@ -73,10 +73,5 @@ def multiply(
     return a * b
 
 
-@register("something-interesting")
-def something(
-    a: float,
-    b: HttpUrl,
-) -> float:
-    """Something random."""
-    ...
+def register_from_other_libraries() -> None:
+    """Run the register hook on other libraries, using entrypoint."""

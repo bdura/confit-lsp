@@ -5,10 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "confit>=0.10.1",
-    "pydantic>=2.12.5",
-    "pygls>=2.0.0",
-    "tomlkit>=0.13.3",
+  "confit>=0.10.1",
+  "persil",
+  "pydantic>=2.12.5",
+  "pygls>=2.0.0",
+  "rtoml>=0.13.0",
+  "tomlkit>=0.13.3",
+  "tomlkit-extras>=0.2.0",
 ]
 
 [project.scripts]
@@ -17,3 +20,6 @@ confit-lsp = "confit_lsp.main:run"
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv.sources]
+persil = { git = "https://github.com/bdura/persil" }

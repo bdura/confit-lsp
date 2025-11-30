@@ -37,6 +37,7 @@ from lsprotocol.types import (
     InitializeParams,
 )
 
+from confit_lsp.descriptor import Data, LineNumber
 from confit_lsp.registry import REGISTRY
 
 logging.basicConfig(level=logging.INFO)
@@ -133,7 +134,7 @@ def validate_config(uri: str, content: str) -> list[Diagnostic]:
                             ),
                             message=f"Element '{value}' not found in the registry.",
                             severity=DiagnosticSeverity.Error,
-                            source="toml-lsp",
+                            source="confit-lsp",
                         )
                     )
 
@@ -195,40 +196,63 @@ async def did_change(ls: LanguageServer, params: DidChangeTextDocumentParams):
 @server.feature(TEXT_DOCUMENT_HOVER)
 async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
     """Provide hover information for factories"""
+
     doc = ls.workspace.get_text_document(params.text_document.uri)
+    data = Data.from_source(doc.source)
 
     if not doc.uri.endswith("config.toml"):
         return None
 
     try:
-        toml_doc = tomlkit.parse(doc.source)
-        positions = find_key_positions(doc.source, toml_doc)
-
-        # Find if cursor is on an element key or value
         cursor_line = params.position.line
-        cursor_char = params.position.character
 
-        for pos in positions:
-            if pos["line"] == cursor_line:
-                value = pos["value"]
+        result = data.line2path.get(LineNumber(cursor_line))
 
-                # Check if hovering over the key or value
-                if (
-                    isinstance(value, str)
-                    and (element := REGISTRY.get(value)) is not None
-                ):
-                    return Hover(
-                        contents=MarkupContent(
-                            kind=MarkupKind.Markdown,
-                            value=f"**Factory: {value}**\n\n{element.docstring}\n\n"
-                            + "\n".join(
-                                (
-                                    f"- {field_name}\n"
-                                    for field_name in element.input_model.model_fields.keys()
-                                )
-                            ),
+        if result is None:
+            return None
+
+        path, key = result
+
+        root = data.data
+
+        for k in path.split("."):
+            root = root[k]
+
+        factory = root.get("factory")
+
+        if factory is None:
+            return None
+
+        element = REGISTRY.get(factory)
+
+        if element is None:
+            return None
+
+        if key == "factory":
+            return Hover(
+                contents=MarkupContent(
+                    kind=MarkupKind.Markdown,
+                    value=f"**Factory: {factory}**\n\n{element.docstring}\n\n"
+                    + "\n".join(
+                        (
+                            f"- {field_name}\n"
+                            for field_name in element.input_model.model_fields.keys()
                         )
-                    )
+                    ),
+                )
+            )
+
+        field_info = element.input_model.model_fields.get(key)
+
+        if field_info is None:
+            return None
+
+        return Hover(
+            contents=MarkupContent(
+                kind=MarkupKind.Markdown,
+                value=f"**Field: {key}**\n\n{field_info.annotation}",
+            )
+        )
 
     except Exception as e:
         logger.error(f"Error in hover: {e}")
