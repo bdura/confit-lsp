@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["pygls>=2.0.0", "tomlkit>=0.13.3"]
+dependencies = [
+    "confit>=0.10.1",
+    "pydantic>=2.12.5",
+    "pygls>=2.0.0",
+    "tomlkit>=0.13.3",
+]
 
 [project.scripts]
 confit-lsp = "confit_lsp.main:run"

@@ -3,8 +3,7 @@ TOML LSP Server with element validation and hover support.
 """
 
 import logging
-from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional
 
 import tomlkit
 from pygls.lsp.server import LanguageServer
@@ -38,58 +37,17 @@ from lsprotocol.types import (
     InitializeParams,
 )
 
+from confit_lsp.registry import REGISTRY
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 server = LanguageServer("config-lsp", "v0.1")
 
 
-class ElementsStore:
-    """Store and manage elements from elements.toml"""
-
-    def __init__(self):
-        self.elements: Dict[str, str] = {}
-        self.elements_file_path: Optional[Path] = None
-
-    def load_elements(self, workspace_root: Path):
-        """Load elements from elements.toml"""
-        elements_path = workspace_root / "elements.toml"
-
-        if not elements_path.exists():
-            logger.warning(f"elements.toml not found at {elements_path}")
-            self.elements = {}
-            return
-
-        try:
-            with elements_path.open("r") as f:
-                doc = tomlkit.load(f)
-
-            self.elements = {}
-            for key, value in doc.items():
-                if isinstance(value, str):
-                    self.elements[key] = value
-
-            self.elements_file_path = elements_path
-            logger.info(f"Loaded {len(self.elements)} elements from elements.toml")
-        except Exception as e:
-            logger.error(f"Error loading elements.toml: {e}")
-            self.elements = {}
-
-    def get_element(self, key: str) -> Optional[str]:
-        """Get element description by key"""
-        return self.elements.get(key)
-
-    def has_element(self, key: str) -> bool:
-        """Check if element exists"""
-        return key in self.elements
-
-
-elements_store = ElementsStore()
-
-
 def find_key_positions(content: str, doc: tomlkit.TOMLDocument) -> list:
     """
-    Find positions of 'element' keys in the TOML document.
+    Find positions of 'factory' keys in the TOML document.
     Returns list of (line, col_start, col_end, value, path)
     """
     positions = []
@@ -98,8 +56,8 @@ def find_key_positions(content: str, doc: tomlkit.TOMLDocument) -> list:
     def visit_item(item, path="", section_line_offset=0):
         if isinstance(item, dict):
             for key, value in item.items():
-                # Search for 'element' key in current dict
-                if key == "element":
+                # Search for 'factory' key in current dict
+                if key == "factory":
                     # Find the line containing this key
                     search_prefix = f"{path}." if path else ""
                     key_pattern = f"{key} ="
@@ -157,8 +115,7 @@ def validate_config(uri: str, content: str) -> list[Diagnostic]:
                 )
                 continue
 
-            # Check if element exists in elements.toml
-            if not elements_store.has_element(value):
+            if value not in REGISTRY:
                 # Find the value position for better error highlighting
                 lines = content.split("\n")
                 value_line = lines[line]
@@ -174,7 +131,7 @@ def validate_config(uri: str, content: str) -> list[Diagnostic]:
                                 start=Position(line=line, character=value_start),
                                 end=Position(line=line, character=value_end),
                             ),
-                            message=f"Element '{value}' not found in elements.toml",
+                            message=f"Element '{value}' not found in the registry.",
                             severity=DiagnosticSeverity.Error,
                             source="toml-lsp",
                         )
@@ -187,11 +144,8 @@ def validate_config(uri: str, content: str) -> list[Diagnostic]:
 
 
 @server.feature(INITIALIZE)
-async def initialize(params: InitializeParams):
-    """Initialize the server and load elements.toml"""
-    if params.root_uri:
-        workspace_root = Path(params.root_uri.replace("file://", ""))
-        elements_store.load_elements(workspace_root)
+async def initialize(params: InitializeParams) -> None:
+    """Initialize the server."""
     return
 
 
@@ -213,11 +167,6 @@ async def did_open(ls: LanguageServer, params: DidOpenTextDocumentParams):
 async def did_save(ls: LanguageServer, params: DidSaveTextDocumentParams):
     """Handle document save event"""
     doc = ls.workspace.get_text_document(params.text_document.uri)
-
-    # Reload elements if elements.toml was saved
-    if doc.uri.endswith("elements.toml"):
-        if ls.workspace.root_path:
-            elements_store.load_elements(Path(ls.workspace.root_path))
 
     # Validate config.toml
     if doc.uri.endswith("config.toml"):
@@ -245,7 +194,7 @@ async def did_change(ls: LanguageServer, params: DidChangeTextDocumentParams):
 
 @server.feature(TEXT_DOCUMENT_HOVER)
 async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
-    """Provide hover information for element values"""
+    """Provide hover information for factories"""
     doc = ls.workspace.get_text_document(params.text_document.uri)
 
     if not doc.uri.endswith("config.toml"):
@@ -264,12 +213,20 @@ async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
                 value = pos["value"]
 
                 # Check if hovering over the key or value
-                if isinstance(value, str) and elements_store.has_element(value):
-                    description = elements_store.get_element(value)
+                if (
+                    isinstance(value, str)
+                    and (element := REGISTRY.get(value)) is not None
+                ):
                     return Hover(
                         contents=MarkupContent(
                             kind=MarkupKind.Markdown,
-                            value=f"**Element: {value}**\n\n{description}",
+                            value=f"**Factory: {value}**\n\n{element.docstring}\n\n"
+                            + "\n".join(
+                                (
+                                    f"- {field_name}\n"
+                                    for field_name in element.input_model.model_fields.keys()
+                                )
+                            ),
                         )
                     )
 
@@ -283,7 +240,6 @@ async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
 async def definition(
     ls: LanguageServer, params: DefinitionParams
 ) -> Optional[Location]:
-    """Go to definition in elements.toml"""
     doc = ls.workspace.get_text_document(params.text_document.uri)
 
     if not doc.uri.endswith("config.toml"):
@@ -299,19 +255,11 @@ async def definition(
             if pos["line"] == cursor_line:
                 value = pos["value"]
 
-                if isinstance(value, str) and elements_store.has_element(value):
-                    if elements_store.elements_file_path:
-                        # Read elements.toml to find the line
-                        with elements_store.elements_file_path.open("r") as f:
-                            for idx, line in enumerate(f):
-                                if line.strip().startswith(f"{value} ="):
-                                    return Location(
-                                        uri=elements_store.elements_file_path.as_uri(),
-                                        range=Range(
-                                            start=Position(line=idx, character=0),
-                                            end=Position(line=idx, character=len(line)),
-                                        ),
-                                    )
+                if (
+                    isinstance(value, str)
+                    and (element := REGISTRY.get(value)) is not None
+                ):
+                    return element.location
 
     except Exception as e:
         logger.error(f"Error in definition: {e}")
@@ -339,21 +287,21 @@ async def completion(
 
         current_line = lines[cursor_line]
 
-        # Check if we're on an element = line
+        # Check if we're on an `element =` line
         if "element" in current_line and "=" in current_line:
             # Create completion items for all elements
             items = []
-            for key, description in elements_store.elements.items():
+            for key, element in REGISTRY.items():
                 items.append(
                     CompletionItem(
                         label=key,
                         kind=CompletionItemKind.Value,
-                        detail=description[:50] + "..."
-                        if len(description) > 50
-                        else description,
+                        detail=element.docstring[:50] + "..."
+                        if len(element.docstring) > 50
+                        else element.docstring,
                         documentation=MarkupContent(
                             kind=MarkupKind.Markdown,
-                            value=f"**{key}**\n\n{description}",
+                            value=f"**{key}**\n\n{element.docstring}",
                         ),
                         insert_text=f'"{key}"',
                         insert_text_format=InsertTextFormat.PlainText,
