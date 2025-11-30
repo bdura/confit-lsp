@@ -9,17 +9,23 @@ from typing import Optional, Dict
 import tomlkit
 from pygls.lsp.server import LanguageServer
 from lsprotocol.types import (
+    TEXT_DOCUMENT_COMPLETION,
     TEXT_DOCUMENT_DID_OPEN,
     TEXT_DOCUMENT_DID_SAVE,
     TEXT_DOCUMENT_DID_CHANGE,
     INITIALIZE,
     TEXT_DOCUMENT_HOVER,
     TEXT_DOCUMENT_DEFINITION,
+    CompletionItem,
+    CompletionItemKind,
+    CompletionList,
+    CompletionParams,
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
     DidChangeTextDocumentParams,
     Diagnostic,
     DiagnosticSeverity,
+    InsertTextFormat,
     Position,
     PublishDiagnosticsParams,
     Range,
@@ -309,6 +315,55 @@ async def definition(
 
     except Exception as e:
         logger.error(f"Error in definition: {e}")
+
+    return None
+
+
+@server.feature(TEXT_DOCUMENT_COMPLETION)
+async def completion(
+    ls: LanguageServer,
+    params: CompletionParams,
+) -> Optional[CompletionList]:
+    """Provide auto-completion for element values"""
+    doc = ls.workspace.get_text_document(params.text_document.uri)
+
+    if not doc.uri.endswith("config.toml"):
+        return None
+
+    try:
+        lines = doc.source.split("\n")
+        cursor_line = params.position.line
+
+        if cursor_line >= len(lines):
+            return None
+
+        current_line = lines[cursor_line]
+
+        # Check if we're on an element = line
+        if "element" in current_line and "=" in current_line:
+            # Create completion items for all elements
+            items = []
+            for key, description in elements_store.elements.items():
+                items.append(
+                    CompletionItem(
+                        label=key,
+                        kind=CompletionItemKind.Value,
+                        detail=description[:50] + "..."
+                        if len(description) > 50
+                        else description,
+                        documentation=MarkupContent(
+                            kind=MarkupKind.Markdown,
+                            value=f"**{key}**\n\n{description}",
+                        ),
+                        insert_text=f'"{key}"',
+                        insert_text_format=InsertTextFormat.PlainText,
+                    )
+                )
+
+            return CompletionList(is_incomplete=False, items=items)
+
+    except Exception as e:
+        logger.error(f"Error in completion: {e}")
 
     return None
 
