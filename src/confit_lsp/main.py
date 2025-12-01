@@ -3,7 +3,7 @@ TOML LSP Server with element validation and hover support.
 """
 
 import logging
-from typing import Optional, Sequence
+from typing import Optional
 
 from pydantic import ValidationError
 import tomlkit
@@ -16,6 +16,7 @@ from lsprotocol.types import (
     INITIALIZE,
     TEXT_DOCUMENT_HOVER,
     TEXT_DOCUMENT_DEFINITION,
+    TEXT_DOCUMENT_INLAY_HINT,
     CompletionItem,
     CompletionItemKind,
     CompletionList,
@@ -25,6 +26,9 @@ from lsprotocol.types import (
     DidChangeTextDocumentParams,
     Diagnostic,
     DiagnosticSeverity,
+    InlayHint,
+    InlayHintKind,
+    InlayHintParams,
     InsertTextFormat,
     Position,
     PublishDiagnosticsParams,
@@ -40,7 +44,6 @@ from lsprotocol.types import (
 
 from confit_lsp.descriptor import Data, LineNumber
 from confit_lsp.registry import REGISTRY, Element
-import logging
 
 
 logging.basicConfig(
@@ -108,7 +111,7 @@ def get_key_value_offsets(
 
     key_offset = start_char, start_char + len(key)
 
-    start_char += line[start_char:].find("=") + 1
+    start_char = line.find("=") + 1
     start_char += len(line[start_char:]) - len(line[start_char:].lstrip())
     end_char = len(line.rstrip())
 
@@ -196,20 +199,16 @@ def validate_config(uri: str, content: str) -> list[Diagnostic]:
             try:
                 element.input_model.model_validate(root)
             except ValidationError as e:
-                logger.debug(f"Pydantic error: {e}")
                 for error in e.errors():
                     msg = error["msg"]
 
                     (key,) = error["loc"]
-                    logger.debug(f"key: {repr(key)}")
-                    logger.debug(f"msg: {repr(msg)}")
 
                     assert isinstance(key, str)
 
                     line_number = data.path2line.get((path, key))
 
                     if line_number is None:
-                        logger.debug("key not found")
                         continue
 
                     line = lines[line_number]
@@ -218,8 +217,6 @@ def validate_config(uri: str, content: str) -> list[Diagnostic]:
                         start=Position(line=line_number, character=start_char),
                         end=Position(line=line_number, character=end_char),
                     )
-
-                    logger.debug(f"range: {repr(msg)}")
 
                     diagnostics.append(
                         Diagnostic(
@@ -305,11 +302,7 @@ async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
 
         path, key = result
 
-        root = data.data
-
-        for k in path.split("."):
-            root = root[k]
-
+        root = data.get_root(path)
         factory = root.get("factory")
 
         if factory is None:
@@ -362,20 +355,36 @@ async def definition(
         return None
 
     try:
-        toml_doc = tomlkit.parse(doc.source)
-        positions = find_key_positions(doc.source, toml_doc)
+        data = Data.from_source(doc.source)
 
-        cursor_line = params.position.line
+        result = data.line2path.get(LineNumber(params.position.line))
 
-        for pos in positions:
-            if pos["line"] == cursor_line:
-                value = pos["value"]
+        if result is None:
+            return None
 
-                if (
-                    isinstance(value, str)
-                    and (element := REGISTRY.get(value)) is not None
-                ):
-                    return element.location
+        path, key = result
+
+        if key != "factory":
+            return None
+
+        line = doc.source.split("\n")[params.position.line]
+        _, (start_char, end_char) = get_key_value_offsets(line, key)
+
+        if not (start_char <= params.position.character <= end_char):
+            return None
+
+        root = data.get_root(path)
+        factory = root.get("factory")
+
+        if factory is None:
+            return None
+
+        element = REGISTRY.get(factory)
+
+        if element is None:
+            return None
+
+        return element.location
 
     except Exception as e:
         logger.error(f"Error in definition: {e}")
@@ -404,7 +413,7 @@ async def completion(
         current_line = lines[cursor_line]
 
         # Check if we're on an `element =` line
-        if "element" in current_line and "=" in current_line:
+        if "factory" in current_line and "=" in current_line:
             # Create completion items for all elements
             items = []
             for key, element in REGISTRY.items():
@@ -430,6 +439,76 @@ async def completion(
         logger.error(f"Error in completion: {e}")
 
     return None
+
+
+@server.feature(TEXT_DOCUMENT_INLAY_HINT)
+def inlay_hints(params: InlayHintParams):
+    items = []
+    document_uri = params.text_document.uri
+    document = server.workspace.get_text_document(document_uri)
+
+    start_line = params.range.start.line
+    end_line = params.range.end.line
+
+    lines = document.lines[start_line : end_line + 1]
+
+    data = Data.from_source(document.source)
+    path_to_element = dict[str, Element]()
+
+    for (path, key), _ in data.path2line.items():
+        if key != "factory":
+            continue
+        root = data.get_root(path)
+        factory = root["factory"]
+
+        element = REGISTRY.get(factory)
+
+        if element is None:
+            return None
+
+        path_to_element[path] = element
+
+    for lineno, line in enumerate(lines):
+        full_key = data.line2path.get(LineNumber(lineno + start_line))
+        if full_key is None:
+            continue
+
+        path, key = full_key
+
+        if key == "factory":
+            continue
+
+        element = path_to_element.get(path)
+
+        if element is None:
+            continue
+
+        field_info = element.input_model.model_fields.get(key)
+
+        if field_info is None:
+            continue
+
+        (_, end_char), _ = get_key_value_offsets(line, key)
+
+        try:
+            annotation = field_info.annotation.__name__
+        except TypeError:
+            annotation = field_info.annotation and str(field_info.annotation) or None
+
+        if annotation is None:
+            continue
+
+        items.append(
+            InlayHint(
+                label=f":{annotation}",
+                kind=InlayHintKind.Type,
+                padding_left=False,
+                padding_right=True,
+                position=Position(line=lineno, character=end_char),
+            )
+        )
+
+    return items
 
 
 def run():
