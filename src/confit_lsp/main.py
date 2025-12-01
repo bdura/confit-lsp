@@ -56,48 +56,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("LSP server started")
 
-server = LanguageServer("config-lsp", "v0.1")
-
-
-def find_key_positions(content: str, doc: tomlkit.TOMLDocument) -> list:
-    """
-    Find positions of 'factory' keys in the TOML document.
-    Returns list of (line, col_start, col_end, value, path)
-    """
-    positions = []
-    lines = content.split("\n")
-
-    def visit_item(item, path="", section_line_offset=0):
-        if isinstance(item, dict):
-            for key, value in item.items():
-                # Search for 'factory' key in current dict
-                if key == "factory":
-                    # Find the line containing this key
-                    search_prefix = f"{path}." if path else ""
-                    key_pattern = f"{key} ="
-
-                    for line_idx, line in enumerate(lines):
-                        if key_pattern in line:
-                            col_start = line.find(key)
-                            if col_start != -1:
-                                col_end = col_start + len(key)
-                                positions.append(
-                                    {
-                                        "line": line_idx,
-                                        "col_start": col_start,
-                                        "col_end": col_end,
-                                        "value": value,
-                                        "path": f"{path}.{key}" if path else key,
-                                    }
-                                )
-                                break
-
-                # Recursively visit nested structures
-                new_path = f"{path}.{key}" if path else key
-                visit_item(value, new_path)
-
-    visit_item(doc)
-    return positions
+server = LanguageServer("confit-lsp", "v0.1")
 
 
 def get_key_value_offsets(
@@ -209,23 +168,41 @@ def validate_config(uri: str, content: str) -> list[Diagnostic]:
                     line_number = data.path2line.get((path, key))
 
                     if line_number is None:
-                        continue
-
-                    line = lines[line_number]
-                    _, (start_char, end_char) = get_key_value_offsets(line, key)
-                    element_range = Range(
-                        start=Position(line=line_number, character=start_char),
-                        end=Position(line=line_number, character=end_char),
-                    )
-
-                    diagnostics.append(
-                        Diagnostic(
-                            range=element_range,
-                            message=f"Argument `{key}` has incompatible type.\n{msg}",
-                            severity=DiagnosticSeverity.Error,
-                            source="confit-lsp",
+                        line_number = data.path2line[(path, "factory")]
+                        line = lines[line_number]
+                        (start_char, end_char), _ = get_key_value_offsets(
+                            line, "factory"
                         )
-                    )
+                        element_range = Range(
+                            start=Position(line=line_number, character=start_char),
+                            end=Position(line=line_number, character=end_char),
+                        )
+
+                        diagnostics.append(
+                            Diagnostic(
+                                range=element_range,
+                                message=f"Argument `{key}` is missing.\n{msg}",
+                                severity=DiagnosticSeverity.Error,
+                                source="confit-lsp",
+                            )
+                        )
+
+                    else:
+                        line = lines[line_number]
+                        _, (start_char, end_char) = get_key_value_offsets(line, key)
+                        element_range = Range(
+                            start=Position(line=line_number, character=start_char),
+                            end=Position(line=line_number, character=end_char),
+                        )
+
+                        diagnostics.append(
+                            Diagnostic(
+                                range=element_range,
+                                message=f"Argument `{key}` has incompatible type.\n{msg}",
+                                severity=DiagnosticSeverity.Error,
+                                source="confit-lsp",
+                            )
+                        )
 
     except Exception as e:
         logger.error(f"Error validating document: {e}")
@@ -490,9 +467,9 @@ def inlay_hints(params: InlayHintParams):
 
         (_, end_char), _ = get_key_value_offsets(line, key)
 
-        try:
-            annotation = field_info.annotation.__name__
-        except TypeError:
+        annotation = getattr(field_info.annotation, "__name__", None)
+
+        if annotation is None:
             annotation = field_info.annotation and str(field_info.annotation) or None
 
         if annotation is None:
@@ -500,10 +477,10 @@ def inlay_hints(params: InlayHintParams):
 
         items.append(
             InlayHint(
-                label=f":{annotation}",
+                label=f": {annotation}",
                 kind=InlayHintKind.Type,
                 padding_left=False,
-                padding_right=True,
+                padding_right=False,
                 position=Position(line=lineno, character=end_char),
             )
         )
