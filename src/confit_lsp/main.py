@@ -6,7 +6,6 @@ import logging
 from typing import Optional
 
 from pydantic import ValidationError
-import tomlkit
 from pygls.lsp.server import LanguageServer
 from lsprotocol.types import (
     TEXT_DOCUMENT_COMPLETION,
@@ -41,9 +40,11 @@ from lsprotocol.types import (
     DefinitionParams,
     InitializeParams,
 )
+from pygls.workspace import TextDocument
 
 from confit_lsp.descriptor import Data, LineNumber
-from confit_lsp.registry import REGISTRY, Element
+from confit_lsp.registry import REGISTRY
+from confit_lsp.capabilities import FunctionDescription
 
 
 logging.basicConfig(
@@ -79,22 +80,24 @@ def get_key_value_offsets(
     return key_offset, value_offset
 
 
-def validate_config(uri: str, content: str) -> list[Diagnostic]:
+def validate_config(doc: TextDocument) -> list[Diagnostic]:
     """Validate config.toml and return diagnostics"""
+    content = doc.source
+
     diagnostics = []
     lines = content.split("\n")
 
     try:
         data = Data.from_source(content)
 
-        factory_paths = dict[str, Element]()
+        factory_paths = dict[str, FunctionDescription]()
 
         for (path, key), line_number in data.path2line.items():
             if key != "factory":
                 continue
 
             root = data.get_root(path)
-            value = root[key]
+            factory_name = root[key]
 
             line = lines[line_number]
             _, (start_char, end_char) = get_key_value_offsets(line, key)
@@ -104,29 +107,32 @@ def validate_config(uri: str, content: str) -> list[Diagnostic]:
                 end=Position(line=line_number, character=end_char - 1),
             )
 
-            if not isinstance(value, str):
+            if not isinstance(factory_name, str):
                 diagnostics.append(
                     Diagnostic(
                         range=element_range,
-                        message=f"Element value must be a string, got {type(value).__name__}",
+                        message=f"Element value must be a string, got {type(factory_name).__name__}",
                         severity=DiagnosticSeverity.Error,
                         source="confit-lsp",
                     )
                 )
                 continue
 
-            if value not in REGISTRY:
+            if factory_name not in REGISTRY:
                 diagnostics.append(
                     Diagnostic(
                         range=element_range,
-                        message=f"Element '{value}' not found in the registry.",
+                        message=f"Element '{factory_name}' not found in the registry.",
                         severity=DiagnosticSeverity.Error,
                         source="confit-lsp",
                     )
                 )
                 continue
 
-            factory_paths[path] = REGISTRY[value]
+            factory_paths[path] = FunctionDescription.from_function(
+                factory_name,
+                REGISTRY[factory_name],
+            )
 
         for (path, key), line_number in data.path2line.items():
             if key == "factory":
@@ -222,7 +228,7 @@ async def did_open(ls: LanguageServer, params: DidOpenTextDocumentParams):
     doc = ls.workspace.get_text_document(params.text_document.uri)
 
     if doc.uri.endswith("config.toml"):
-        diagnostics = validate_config(doc.uri, doc.source)
+        diagnostics = validate_config(doc)
         payload = PublishDiagnosticsParams(
             uri=doc.uri,
             diagnostics=diagnostics,
@@ -237,7 +243,7 @@ async def did_save(ls: LanguageServer, params: DidSaveTextDocumentParams):
 
     # Validate config.toml
     if doc.uri.endswith("config.toml"):
-        diagnostics = validate_config(doc.uri, doc.source)
+        diagnostics = validate_config(doc)
         payload = PublishDiagnosticsParams(
             uri=doc.uri,
             diagnostics=diagnostics,
@@ -251,7 +257,7 @@ async def did_change(ls: LanguageServer, params: DidChangeTextDocumentParams):
     doc = ls.workspace.get_text_document(params.text_document.uri)
 
     if doc.uri.endswith("config.toml"):
-        diagnostics = validate_config(doc.uri, doc.source)
+        diagnostics = validate_config(doc)
         payload = PublishDiagnosticsParams(
             uri=doc.uri,
             diagnostics=diagnostics,
@@ -280,31 +286,33 @@ async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
         path, key = result
 
         root = data.get_root(path)
-        factory = root.get("factory")
+        factory_name = root.get("factory")
+
+        if factory_name is None:
+            return None
+
+        factory = REGISTRY.get(factory_name)
 
         if factory is None:
             return None
 
-        element = REGISTRY.get(factory)
-
-        if element is None:
-            return None
+        desctiption = FunctionDescription.from_function(factory_name, factory)
 
         if key == "factory":
             return Hover(
                 contents=MarkupContent(
                     kind=MarkupKind.Markdown,
-                    value=f"**Factory: {factory}**\n\n{element.docstring}\n\n"
+                    value=f"**Factory: {factory_name}**\n\n{desctiption.docstring}\n\n"
                     + "\n".join(
                         (
                             f"- {field_name}\n"
-                            for field_name in element.input_model.model_fields.keys()
+                            for field_name in desctiption.input_model.model_fields.keys()
                         )
                     ),
                 )
             )
 
-        field_info = element.input_model.model_fields.get(key)
+        field_info = desctiption.input_model.model_fields.get(key)
 
         if field_info is None:
             return None
@@ -351,17 +359,19 @@ async def definition(
             return None
 
         root = data.get_root(path)
-        factory = root.get("factory")
+        factory_name = root.get("factory")
+
+        if factory_name is None:
+            return None
+
+        factory = REGISTRY.get(factory_name)
 
         if factory is None:
             return None
 
-        element = REGISTRY.get(factory)
+        description = FunctionDescription.from_function(factory_name, factory)
 
-        if element is None:
-            return None
-
-        return element.location
+        return description.location
 
     except Exception as e:
         logger.error(f"Error in definition: {e}")
@@ -393,19 +403,23 @@ async def completion(
         if "factory" in current_line and "=" in current_line:
             # Create completion items for all elements
             items = []
-            for key, element in REGISTRY.items():
+            for factory_name, factory in REGISTRY.items():
+                description = FunctionDescription.from_function(factory_name, factory)
+
+                docstring = description.docstring or "N/A"
+
                 items.append(
                     CompletionItem(
-                        label=key,
+                        label=factory_name,
                         kind=CompletionItemKind.Value,
-                        detail=element.docstring[:50] + "..."
-                        if len(element.docstring) > 50
-                        else element.docstring,
+                        detail=docstring[:50] + "..."
+                        if len(docstring) > 50
+                        else description.docstring,
                         documentation=MarkupContent(
                             kind=MarkupKind.Markdown,
-                            value=f"**{key}**\n\n{element.docstring}",
+                            value=f"**{factory_name}**\n\n{description.docstring}",
                         ),
-                        insert_text=f'"{key}"',
+                        insert_text=f'"{factory_name}"',
                         insert_text_format=InsertTextFormat.PlainText,
                     )
                 )
@@ -430,20 +444,20 @@ def inlay_hints(params: InlayHintParams):
     lines = document.lines[start_line : end_line + 1]
 
     data = Data.from_source(document.source)
-    path_to_element = dict[str, Element]()
+    path_to_element = dict[str, FunctionDescription]()
 
     for (path, key), _ in data.path2line.items():
         if key != "factory":
             continue
         root = data.get_root(path)
-        factory = root["factory"]
+        factory_name = root["factory"]
 
-        element = REGISTRY.get(factory)
+        factory = REGISTRY.get(factory_name)
 
-        if element is None:
+        if factory is None:
             return None
 
-        path_to_element[path] = element
+        path_to_element[path] = FunctionDescription.from_function(factory_name, factory)
 
     for lineno, line in enumerate(lines):
         full_key = data.line2path.get(LineNumber(lineno + start_line))
@@ -455,12 +469,12 @@ def inlay_hints(params: InlayHintParams):
         if key == "factory":
             continue
 
-        element = path_to_element.get(path)
+        factory = path_to_element.get(path)
 
-        if element is None:
+        if factory is None:
             continue
 
-        field_info = element.input_model.model_fields.get(key)
+        field_info = factory.input_model.model_fields.get(key)
 
         if field_info is None:
             continue

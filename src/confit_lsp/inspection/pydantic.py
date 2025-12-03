@@ -5,23 +5,20 @@ from pydantic import BaseModel, create_model
 
 def get_pydantic_input_model(
     func: Callable,
-    model_name: str = "InputModel",
 ) -> type[BaseModel]:
     """
     Convert a function signature to a Pydantic model for input validation.
 
     Args:
-        func: The function to inspect
-        model_name: Name for the generated Pydantic model
+        func: The function to inspect.
 
     Returns:
-        A Pydantic model class representing the function's parameters
+        A Pydantic model class representing the function's parameters.
     """
     sig = inspect.signature(func)
 
-    # Get type hints if available
     try:
-        type_hints = get_type_hints(func)
+        type_hints = get_type_hints(func, include_extras=True)
     except Exception:
         type_hints = {}
 
@@ -41,4 +38,4 @@ def get_pydantic_input_model(
             fields[param_name] = (param_type, param.default)
 
     # Create and return the Pydantic model
-    return create_model(model_name, **fields)
+    return create_model("InputModel", **fields)

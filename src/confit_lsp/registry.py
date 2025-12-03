@@ -1,28 +1,46 @@
-from dataclasses import dataclass
-from typing import Callable, overload
+from typing import Callable, Iterator, overload
 
 from importlib.metadata import entry_points
 
 
-from lsprotocol.types import Location
-from pydantic import BaseModel, HttpUrl
-
-from .inspection import get_function_location, get_pydantic_input_model
+from pydantic import HttpUrl
 
 
-@dataclass
-class Element:
-    name: str
-    func: Callable
-    location: Location
-    input_model: type[BaseModel]
+class Registry:
+    def __init__(self) -> None:
+        self.factories = dict[str, Callable]()
 
-    @property
-    def docstring(self) -> str:
-        return self.func.__doc__ or "N/A"
+    def get(self, name: str) -> Callable | None:
+        return self.factories.get(name)
+
+    @overload
+    def register[F: Callable](self, name: str) -> Callable[[F], F]: ...
+    @overload
+    def register[F: Callable](
+        self,
+        name: str,
+        func: F,
+    ) -> F: ...
+
+    def register[F: Callable](
+        self,
+        name: str,
+        func: F | None = None,
+    ) -> Callable[[F], F] | F:
+        def do_register(f: F) -> F:
+            self.factories[name] = f
+            return f
+
+        if func is not None:
+            return do_register(func)
+
+        return do_register
+
+    def items(self) -> Iterator[tuple[str, Callable]]:
+        yield from self.factories.items()
 
 
-REGISTRY = dict[str, Element]()
+REGISTRY = dict[str, Callable]()
 
 
 @overload
@@ -41,17 +59,7 @@ def register[F: Callable](
     func: F | None = None,
 ) -> Callable[[F], F] | F:
     def do_register(f: F) -> F:
-        location = get_function_location(f)
-        input_model = get_pydantic_input_model(f)
-
-        element = Element(
-            name=name,
-            func=f,
-            location=location,
-            input_model=input_model,
-        )
-
-        REGISTRY[name] = element
+        REGISTRY[name] = f
         return f
 
     if func is not None:

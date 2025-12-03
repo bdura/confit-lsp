@@ -16,7 +16,9 @@ def get_function_location(func: Callable) -> Location:
         Dictionary containing file path, line number, and column (0-indexed)
     """
     source_file = inspect.getsourcefile(func)
-    assert source_file is not None, "you cannot use a lambda"
+    if source_file is None:
+        raise ValueError("Only proper functions can be annotated.")
+
     path = Path(source_file)
 
     source_lines, line_number = inspect.getsourcelines(func)
