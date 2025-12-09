@@ -1,13 +1,9 @@
-from typing import Iterator, Sequence
-from persil import string, regex, Parser
+from typing import Iterator
+from persil import string, regex
 from persil.result import Ok
-from persil.utils import RowCol
 
-whitespace = regex(r"\s*")
-
-
-def lexeme[In: Sequence, Out](p: Parser[In, Out]) -> Parser[In, Out]:
-    return p << whitespace
+from .utils import range_from_persil, whitespace
+from .types import Element
 
 
 dquote = string('"')
@@ -58,28 +54,29 @@ key_value_pair = dotted_keys.span().combine(
 element = (
     whitespace
     >> (
-        key_value_pair.map(lambda v: ("kv", v)) | table_title.map(lambda v: ("root", v))
+        key_value_pair.map(lambda v: ("kv", v))
+        | table_title.map(lambda v: ("title", v))
     )
     << line_remainder
     << string("\n")
 )
 
 
-Key = tuple[str, ...]
-Span = tuple[RowCol, RowCol]
-KeyValue = tuple[Span, Span]
-
-
-def parse_toml(content: str) -> Iterator[tuple[Key, tuple[Span, Span]]]:
+def parse_toml(content: str) -> Iterator[Element]:
     index = 0
     root = tuple[str, ...]()
 
     while isinstance(result := element.wrapped_fn(content, index), Ok):
         index = result.index
 
-        if result.value[0] == "root":
+        if result.value[0] == "title":
             root = result.value[1]
         elif result.value[0] == "kv":
             _, (key, value) = result.value
             path = root + key.value
-            yield (path, ((key.start, key.stop), (value.start, value.stop)))
+
+            yield Element(
+                path=path,
+                key=range_from_persil(key),
+                value=range_from_persil(value),
+            )
