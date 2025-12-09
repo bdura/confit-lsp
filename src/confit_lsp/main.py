@@ -235,7 +235,7 @@ async def did_save(ls: LanguageServer, params: DidSaveTextDocumentParams):
 #         ls.text_document_publish_diagnostics(payload)
 
 
-# @server.feature(TEXT_DOCUMENT_HOVER)
+@server.feature(TEXT_DOCUMENT_HOVER)
 async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
     """Provide hover information for factories"""
 
@@ -248,15 +248,14 @@ async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
         data = ConfigurationView.from_source(doc.source)
 
         cursor = params.position
+        element = data.position2element(cursor)
 
-        result = data.line2path.get(LineNumber(cursor_line))
-
-        if result is None:
+        if element is None:
             return None
 
-        path, key = result
+        *path, key = element.path
+        root = data.get_object(path)
 
-        root = data.get_root(path)
         factory_name = root.get("factory")
 
         if factory_name is None:
@@ -267,23 +266,23 @@ async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
         if factory is None:
             return None
 
-        desctiption = FunctionDescription.from_function(factory_name, factory)
+        description = FunctionDescription.from_function(factory_name, factory)
 
         if key == "factory":
             return Hover(
                 contents=MarkupContent(
                     kind=MarkupKind.Markdown,
-                    value=f"**Factory: {factory_name}**\n\n{desctiption.docstring}\n\n"
+                    value=f"**Factory: {factory_name}**\n\n{description.docstring}\n\n"
                     + "\n".join(
                         (
                             f"- {field_name}\n"
-                            for field_name in desctiption.input_model.model_fields.keys()
+                            for field_name in description.input_model.model_fields.keys()
                         )
                     ),
                 )
             )
 
-        field_info = desctiption.input_model.model_fields.get(key)
+        field_info = description.input_model.model_fields.get(key)
 
         if field_info is None:
             return None
@@ -301,7 +300,7 @@ async def hover(ls: LanguageServer, params: HoverParams) -> Optional[Hover]:
     return None
 
 
-# @server.feature(TEXT_DOCUMENT_DEFINITION)
+@server.feature(TEXT_DOCUMENT_DEFINITION)
 async def definition(
     ls: LanguageServer, params: DefinitionParams
 ) -> Optional[Location]:
@@ -311,25 +310,17 @@ async def definition(
         return None
 
     try:
-        data = Data.from_source(doc.source)
+        data = ConfigurationView.from_source(doc.source)
 
-        result = data.line2path.get(LineNumber(params.position.line))
+        cursor = params.position
+        element = data.position2element(cursor)
 
-        if result is None:
+        if element is None:
             return None
 
-        path, key = result
+        *path, _ = element.path
+        root = data.get_object(path)
 
-        if key != "factory":
-            return None
-
-        line = doc.source.split("\n")[params.position.line]
-        _, (start_char, end_char) = get_key_value_offsets(line, key)
-
-        if not (start_char <= params.position.character <= end_char):
-            return None
-
-        root = data.get_root(path)
         factory_name = root.get("factory")
 
         if factory_name is None:
@@ -362,40 +353,43 @@ async def completion(
         return None
 
     try:
-        lines = doc.source.split("\n")
-        cursor_line = params.position.line
+        data = ConfigurationView.from_source(doc.source)
 
-        if cursor_line >= len(lines):
+        cursor = params.position
+        element = data.position2element(cursor)
+
+        if element is None:
             return None
 
-        current_line = lines[cursor_line]
+        *_, key = element.path
 
-        # Check if we're on an `element =` line
-        if "factory" in current_line and "=" in current_line:
-            # Create completion items for all elements
-            items = []
-            for factory_name, factory in REGISTRY.items():
-                description = FunctionDescription.from_function(factory_name, factory)
+        if key != "factory":
+            return None
 
-                docstring = description.docstring or "N/A"
+        # Create completion items for all elements
+        items = []
+        for factory_name, factory in REGISTRY.items():
+            description = FunctionDescription.from_function(factory_name, factory)
 
-                items.append(
-                    CompletionItem(
-                        label=factory_name,
-                        kind=CompletionItemKind.Value,
-                        detail=docstring[:50] + "..."
-                        if len(docstring) > 50
-                        else description.docstring,
-                        documentation=MarkupContent(
-                            kind=MarkupKind.Markdown,
-                            value=f"**{factory_name}**\n\n{description.docstring}",
-                        ),
-                        insert_text=f'"{factory_name}"',
-                        insert_text_format=InsertTextFormat.PlainText,
-                    )
+            docstring = description.docstring or "N/A"
+
+            items.append(
+                CompletionItem(
+                    label=factory_name,
+                    kind=CompletionItemKind.Value,
+                    detail=docstring[:50] + "..."
+                    if len(docstring) > 50
+                    else description.docstring,
+                    documentation=MarkupContent(
+                        kind=MarkupKind.Markdown,
+                        value=f"**{factory_name}**\n\n{description.docstring}",
+                    ),
+                    insert_text=f"{factory_name}",
+                    insert_text_format=InsertTextFormat.PlainText,
                 )
+            )
 
-            return CompletionList(is_incomplete=False, items=items)
+        return CompletionList(is_incomplete=False, items=items)
 
     except Exception as e:
         logger.error(f"Error in completion: {e}")
@@ -403,54 +397,59 @@ async def completion(
     return None
 
 
-# @server.feature(TEXT_DOCUMENT_INLAY_HINT)
+@server.feature(TEXT_DOCUMENT_INLAY_HINT)
 def inlay_hints(params: InlayHintParams):
-    items = []
     document_uri = params.text_document.uri
     document = server.workspace.get_text_document(document_uri)
+
+    try:
+        view = ConfigurationView.from_source(document.source)
+    except Exception as e:
+        logger.error(f"Error in inlay hints: {e}")
+        return None
+
+    hints = list[InlayHint]()
 
     start_line = params.range.start.line
     end_line = params.range.end.line
 
-    lines = document.lines[start_line : end_line + 1]
-
-    data = Data.from_source(document.source)
-    path_to_element = dict[str, FunctionDescription]()
-
-    for (path, key), _ in data.path2line.items():
-        if key != "factory":
+    factories = dict[ElementPath, FunctionDescription]()
+    for element in view.elements:
+        if element.path[-1] != "factory":
             continue
-        root = data.get_root(path)
-        factory_name = root["factory"]
-
+        factory_name = view.get_value(element.path)
         factory = REGISTRY.get(factory_name)
 
         if factory is None:
-            return None
-
-        path_to_element[path] = FunctionDescription.from_function(factory_name, factory)
-
-    for lineno, line in enumerate(lines):
-        full_key = data.line2path.get(LineNumber(lineno + start_line))
-        if full_key is None:
             continue
 
-        path, key = full_key
+        factories[element.path[:-1]] = FunctionDescription.from_function(
+            factory_name, factory
+        )
 
-        if key == "factory":
+    elements = list[Element]()
+    for element in view.elements:
+        if element.path[-1] == "factory":
             continue
 
-        factory = path_to_element.get(path)
-
-        if factory is None:
+        if element.path[:-1] not in factories:
             continue
+
+        if end_line <= element.key.start.line or element.value.end.line <= start_line:
+            continue
+
+        elements.append(element)
+
+    for element in elements:
+        key = element.path[-1]
+        path = element.path[:-1]
+
+        factory = factories[path]
 
         field_info = factory.input_model.model_fields.get(key)
 
         if field_info is None:
             continue
-
-        (_, end_char), _ = get_key_value_offsets(line, key)
 
         annotation = getattr(field_info.annotation, "__name__", None)
 
@@ -460,17 +459,17 @@ def inlay_hints(params: InlayHintParams):
         if annotation is None:
             continue
 
-        items.append(
+        hints.append(
             InlayHint(
                 label=f": {annotation}",
                 kind=InlayHintKind.Type,
                 padding_left=False,
                 padding_right=False,
-                position=Position(line=lineno, character=end_char),
+                position=element.key.end,
             )
         )
 
-    return items
+    return hints
 
 
 def run():

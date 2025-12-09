@@ -1,4 +1,5 @@
 [test.element]
 factory = "something-interesting"
-a = 63
 url = "https://test"
+retries = 2
+a = 20
