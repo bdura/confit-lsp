@@ -3,11 +3,15 @@
   "displayName": "confit-lsp",
   "description": "LSP for Confit",
   "version": "0.0.1",
+  "icon": "logo.png",
   "engines": {
     "vscode": "^1.106.1"
   },
+  "repository": {
+    "url": "https://github.com/bdura/confit-lsp"
+  },
   "categories": [
-    "Other"
+    "LSP"
   ],
   "activationEvents": [
     "onLanguage:toml"

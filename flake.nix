@@ -22,8 +22,7 @@
           buildInputs = with pkgs; [
             uv
             nodejs
-            pnpm
-            typescript
+            vsce
           ];
         };
       }
