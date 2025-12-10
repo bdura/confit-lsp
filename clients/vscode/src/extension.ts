@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Options to control the language client
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "toml" }],
+    documentSelector: [{ scheme: "file", language: "TOML" }],
     synchronize: {
       fileEvents: vscode.workspace.createFileSystemWatcher("**/*.toml"),
     },
@@ -38,4 +38,9 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate(): Thenable<void> | undefined {
+  if (!client) {
+    return undefined;
+  }
+  return client.stop();
+}
