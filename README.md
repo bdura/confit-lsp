@@ -1,0 +1,3 @@
+# `confit-lite` artifacts
+
+In case you do not want to go through the hassle of building your own VSCode client...
