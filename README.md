@@ -60,7 +60,7 @@ The goal is to make it gradually better.
 - [x] Value type-checking with Pydantic
 - [x] Go to definition
 - [x] [VSCode extension]
-- [ ] Handle references (type-checking & go to definition)
+- [x] Handle references (type-checking & go to definition)
 - [ ] Support complex objects (check that factories are compatible)
 - [ ] Allow LSP-aware lazy defaults
 - [ ] Serialization capabilities
