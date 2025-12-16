@@ -15,6 +15,7 @@ from lsprotocol.types import (
     TEXT_DOCUMENT_HOVER,
     TEXT_DOCUMENT_DEFINITION,
     TEXT_DOCUMENT_INLAY_HINT,
+    TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL,
     CompletionItem,
     CompletionItemKind,
     CompletionList,
@@ -35,6 +36,9 @@ from lsprotocol.types import (
     HoverParams,
     DefinitionParams,
     InitializeParams,
+    SemanticTokens,
+    SemanticTokensLegend,
+    SemanticTokensParams,
 )
 from pygls.workspace import TextDocument
 from confit_lite.registry import REGISTRY
@@ -463,6 +467,67 @@ def inlay_hints(params: InlayHintParams):
         )
 
     return hints
+
+
+TOKEN_TYPES = ["reference"]
+TOKEN_MODIFIERS = []
+
+LEGEND = SemanticTokensLegend(
+    token_types=TOKEN_TYPES,
+    token_modifiers=TOKEN_MODIFIERS,
+)
+
+
+@server.feature(
+    TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL,
+    LEGEND,
+)
+def semantic_tokens(params: SemanticTokensParams) -> SemanticTokens | None:
+    document_uri = params.text_document.uri
+    document = server.workspace.get_text_document(document_uri)
+
+    try:
+        view = ConfigurationView.from_source(document.source)
+    except Exception as e:
+        logger.error(f"Error in semantic tokens: {e}")
+        return None
+
+    data = list[int]()
+    prev_line = 0
+    prev_char = 0
+
+    for path in view.references.keys():
+        element = view.path2element[path]
+
+        start = element.value.start
+        end = element.value.end
+
+        line = start.line
+        assert end.line == line
+
+        start_char = start.character + 2
+        length = end.character - 1 - start_char
+
+        # Semantic tokens use *relative* positions
+        delta_line = line - prev_line
+        delta_start = start_char - prev_char if delta_line == 0 else start_char
+
+        data.extend(
+            [
+                delta_line,
+                delta_start,
+                length,
+                TOKEN_TYPES.index("reference"),
+                0,
+            ]
+        )
+
+        prev_line = line
+        prev_char = start_char
+
+    logger.info("Request handled")
+
+    return SemanticTokens(data=data)
 
 
 def run():
