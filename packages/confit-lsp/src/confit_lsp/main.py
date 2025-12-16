@@ -170,9 +170,23 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
             adapter = TypeAdapter(info.annotation)
 
             total_path = (*path, key)
-            if total_path in view.references:
-                target = view.references[total_path].path
-                value = view.get_value(target)
+            element = view.path2element[total_path]
+
+            target = view.references.get(total_path)
+
+            if target is not None:
+                try:
+                    value = view.get_value(target)
+                except KeyError:
+                    diagnostics.append(
+                        Diagnostic(
+                            range=element.value,
+                            message="No element with this key exists.",
+                            severity=DiagnosticSeverity.Error,
+                            source="confit-lsp",
+                        )
+                    )
+                    continue
 
             try:
                 adapter.validate_python(value)
@@ -323,7 +337,8 @@ async def definition(
 
     if element.path in view.references:
         target = view.references[element.path]
-        return Location(uri=doc.uri, range=target.value)
+        element = view.path2element.get(target)
+        return element and Location(uri=doc.uri, range=element.value)
 
     *path, key = element.path
 

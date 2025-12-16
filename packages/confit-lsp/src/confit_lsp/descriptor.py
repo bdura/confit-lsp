@@ -20,7 +20,7 @@ class ConfigurationView:
     """Key-value ranges for look-up."""
 
     @cached_property
-    def references(self) -> dict[ElementPath, Element]:
+    def references(self) -> dict[ElementPath, ElementPath]:
         """In-document references."""
         path2path = dict[ElementPath, ElementPath]()
 
@@ -43,18 +43,7 @@ class ConfigurationView:
 
                 path2path[new_path] = tuple(value[1:].split("."))
 
-        result = dict[ElementPath, Element]()
-
-        for path, target in path2path.items():
-            elements = [
-                element
-                for element in self.elements
-                if element.path[: len(target)] == target
-            ]
-            if elements:
-                result[path] = elements[0]
-
-        return result
+        return path2path
 
     @cached_property
     def path2element(self) -> dict[ElementPath, Element]:

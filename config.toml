@@ -1,10 +1,15 @@
 [test.element]
 factory = "add"
 a = 0
-b = "$targets.some-super-value"
+b = "$targets.test"
 c = true
 d = 9
 
 
 [targets]
-some-super-value = "true"
+test = 0
+
+[targets.test2]
+factory = "add"
+a = 0
+b = 2
