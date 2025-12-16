@@ -17,10 +17,10 @@ def test(
 @register("add")
 def add(
     a: float,
-    other: float,
+    b: float,
 ) -> float:
     """Add two numbers together."""
-    return a + other
+    return a + b
 
 
 @register("multiply")

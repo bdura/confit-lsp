@@ -1,5 +1,5 @@
 [test.element]
-factory = "test"
+factory = "add"
 a = 0
 b = "$targets.some-super-value"
 c = true
@@ -7,4 +7,4 @@ d = 9
 
 
 [targets]
-some-super-value = 42
+some-super-value = "true"
