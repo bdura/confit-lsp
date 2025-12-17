@@ -71,14 +71,13 @@ def parse_toml(content: str) -> Iterator[Element]:
     while isinstance(result := element.wrapped_fn(content, index), Ok):
         index = result.index
 
-        if result.value[0] == "title":
-            root = result.value[1]
-        elif result.value[0] == "kv":
-            _, (key, value) = result.value
-            path = root + key.value
-
-            yield Element(
-                path=path,
-                key=range_from_persil(key),
-                value=range_from_persil(value),
-            )
+        match result.value:
+            case ("title", title):
+                root = title
+            case ("kv", (key, value)):
+                path = root + key.value
+                yield Element(
+                    path=path,
+                    key=range_from_persil(key),
+                    value=range_from_persil(value),
+                )

@@ -41,4 +41,4 @@ def build_url(
 
     Just demonstrating how more complex type would work.
     """
-    ...
+    return 0.0
