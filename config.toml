@@ -1,15 +1,11 @@
 [test.element]
 factory = "add"
 a = 0
-b = "$targets.test"
+b = "$targets.b"
 c = true
 d = 9
 
 
-[targets]
-test = 0
-
-[targets.test2]
-factory = "add"
-a = 0
-b = 2
+[targets.b]
+factory = "url-builder"
+url = "http://test"

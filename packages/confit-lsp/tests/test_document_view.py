@@ -8,7 +8,7 @@ factory = "add"
 a = 9
 
 [section.b]
-factory = "add"
+factory = "subtract"
 a = 0
 b = 42
 """
@@ -16,7 +16,7 @@ b = 42
 
 def test_factories():
     view = ConfigurationView.from_source(TOML)
-    assert {e.path for e in view.factories} == {
-        ("section", "factory"),
-        ("section", "b", "factory"),
+    assert view.factories == {
+        ("section",): "add",
+        ("section", "b"): "subtract",
     }

@@ -1,4 +1,4 @@
-from typing import Callable, get_type_hints
+from typing import Callable
 from pydantic import BaseModel, ConfigDict
 import pytest
 

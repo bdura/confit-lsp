@@ -3,7 +3,7 @@ TOML LSP Server with element validation and hover support.
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import TypeAdapter, ValidationError
 from pygls.lsp.server import LanguageServer
@@ -137,7 +137,7 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
         required_model_keys = set(
             key
             for key, info in factory.input_model.model_fields.items()
-            if info.default is not None or info.default_factory is not None
+            if info.is_required()
         )
 
         extra_keys = root_keys - model_keys
@@ -167,16 +167,15 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
             info = factory.input_model.model_fields[key]
             value = root[key]
 
-            adapter = TypeAdapter(info.annotation)
-
             total_path = (*path, key)
-            element = view.path2element[total_path]
 
             target = view.references.get(total_path)
 
             if target is not None:
+                logger.info(f"1 - {total_path}")
+                element = view.path2element[total_path]
                 try:
-                    value = view.get_value(target)
+                    view.get_value(target)
                 except KeyError:
                     diagnostics.append(
                         Diagnostic(
@@ -187,10 +186,33 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
                         )
                     )
                     continue
+                total_path = target
+
+            if (sub_factory_descriptor := factories.get(total_path)) is not None:
+                if sub_factory_descriptor.return_type is None:
+                    continue
+                if info.annotation == Any:
+                    continue
+
+                if sub_factory_descriptor.return_type != info.annotation:
+                    diagnostics.append(
+                        Diagnostic(
+                            range=factory_element.key,
+                            message=(
+                                f"Argument `{key}` is provided by a factory with incompatible type.\n"
+                                f"Expected `{info.annotation.__qualname__}`, got `{sub_factory_descriptor.return_type.__qualname__}`."
+                            ),
+                            severity=DiagnosticSeverity.Error,
+                            source="confit-lsp",
+                        )
+                    )
+                continue
 
             try:
+                adapter = TypeAdapter(info.annotation)
                 adapter.validate_python(value)
             except ValidationError as e:
+                logger.info(f"2 - {total_path}")
                 element = view.path2element[total_path]
                 for error in e.errors():
                     msg = error["msg"]
@@ -337,6 +359,7 @@ async def definition(
 
     if element.path in view.references:
         target = view.references[element.path]
+        logger.info(f"3 - {target}")
         element = view.path2element.get(target)
         return element and Location(uri=doc.uri, range=element.value)
 

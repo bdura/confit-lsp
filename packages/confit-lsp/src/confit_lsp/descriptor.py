@@ -50,15 +50,15 @@ class ConfigurationView:
         return {element.path: element for element in self.elements}
 
     @cached_property
-    def factories(self) -> list[Element]:
-        result = list[Element]()
+    def factories(self) -> dict[ElementPath, str]:
+        result = dict[ElementPath, str]()
 
         for element in self.elements:
-            *_, key = element.path
+            *path, key = element.path
             if key != "factory":
                 continue
 
-            result.append(element)
+            result[tuple(path)] = self.get_value(element.path)
 
         return result
 
