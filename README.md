@@ -20,8 +20,7 @@ pip install git+https://github.com/bdura/confit-lite[lsp]
 
 ### Using the LSP
 
-On VSCode, you'll need to install a client. See [`clients/vscode/`](./clients/vscode/)
-for more information.
+See the README for [`confit-lsp`].
 
 ### Adding factories
 
@@ -60,8 +59,10 @@ The goal is to make it gradually better.
 - [x] Value type-checking with Pydantic
 - [x] Go to definition
 - [x] [VSCode extension]
-- [ ] Handle references (type-checking & go to definition)
-- [ ] Support complex objects (check that factories are compatible)
+- [x] Handle references (type-checking & go to definition)
+- [x] Basic support for complex objects
+      (nested factories - check that factories generate correct type)
+- [ ] Handle compatible types, not just identical types
 - [ ] Allow LSP-aware lazy defaults
 - [ ] Serialization capabilities
 - [ ] Highlight references
@@ -72,6 +73,7 @@ The goal is to make it gradually better.
 
 [VSCode extension]: ./clients/vscode/
 [example]: ./packages/confit-factories/pyproject.toml
+[`confit-lsp`]: ./packages/confit-lsp/README.md
 
 <!-- Global links -->
 

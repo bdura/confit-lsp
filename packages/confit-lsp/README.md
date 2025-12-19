@@ -1,20 +1,29 @@
 # `confit-lsp`, an LSP for `confit-lite`
 
-## Quickstart
+For the LSP to work, you will need two things:
 
-First off, you need to add `confit-lsp` to your development dependencies:
+1. Install this project in your virtual environment
+2. Configure your IDE
+
+## Installing the LSP
+
+You just need to add `confit-lsp` to your development dependencies:
 
 ```shell
 uv add --group dev git+ssh://git@github.com/bdura/confit-lite.git#subdirectory=packages/confit-lsp
 ```
 
-Then, you'll need to add the LSP to your IDE.
+## IDE configuration
 
-### IDE configuration
+### VSCode
 
-We provide a basic [VSCode extension].
+We provide a VSCode extension. Follow the [instructions]
+to compile it from source, or use [a pre-compiled one][vsix].
 
-#### Neovim
+Then, install the extension from the `VSIX` artifact.
+From the VSCode Extensions panel: Settings > Install from VSIX.
+
+### Neovim
 
 ```lua
 vim.lsp.config['confit-lsp'] = {
@@ -26,7 +35,7 @@ vim.lsp.config['confit-lsp'] = {
 
 You will need to run `vim.lsp.enable('confit-lsp')` to start the language server.
 
-#### Helix
+### Helix
 
 ```toml
 [language-server.confit-lsp]
@@ -42,4 +51,5 @@ indent = { tab-width = 2, unit = "  " }
 language-servers = ["confit-lsp"]
 ```
 
-[VSCode extension]: ./../../clients/vscode/
+[instructions]: ./../../clients/vscode/
+[vsix]: https://github.com/bdura/confit-lite/tree/artifacts
