@@ -2,7 +2,7 @@
 
 LSP client for the [Confit] configuration system ([`confit-lite`] at the moment).
 
-![Example diagnostics](./assets/diagnostics.png)
+![Example diagnostics](https://raw.githubusercontent.com/bdura/confit-lite/refs/heads/main/clients/vscode/assets/diagnostics.png)
 
 ## Getting started
 
