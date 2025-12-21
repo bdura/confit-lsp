@@ -2,7 +2,7 @@
   "name": "confit-lsp",
   "displayName": "Confit LSP",
   "description": "LSP client for the Confit configuration system",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "bdura",
   "icon": "assets/logo.png",
   "engines": {
