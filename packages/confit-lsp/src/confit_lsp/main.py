@@ -40,7 +40,7 @@ from pygls.workspace import TextDocument
 from confit_lite.registry import REGISTRY
 
 from .descriptor import ConfigurationView
-from .parsers.types import Element, ElementPath
+from .parsers.types import ElementPath
 from .capabilities import FunctionDescription
 
 
@@ -95,17 +95,14 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
 
     factories = dict[ElementPath, FunctionDescription]()
 
-    for element in view.elements:
-        *path, key = element.path
-        if key != "factory":
-            continue
-
-        factory_name = view.get_value(element.path)
+    for path in view.factories():
+        location = view.values[path]
+        factory_name = view.get_value(path)
 
         if not isinstance(factory_name, str):
             diagnostics.append(
                 Diagnostic(
-                    range=element.value,
+                    range=location,
                     message=f"Element value must be a string, got {type(factory_name).__name__}",
                     severity=DiagnosticSeverity.Error,
                     source="confit-lsp",
@@ -116,7 +113,7 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
         if factory_name not in REGISTRY:
             diagnostics.append(
                 Diagnostic(
-                    range=element.value,
+                    range=location,
                     message=f"Element '{factory_name}' not found in the registry.",
                     severity=DiagnosticSeverity.Error,
                     source="confit-lsp",
@@ -124,7 +121,7 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
             )
             continue
 
-        factories[tuple(path)] = FunctionDescription.from_function(
+        factories[path[:-1]] = FunctionDescription.from_function(
             factory_name,
             REGISTRY[factory_name],
         )
@@ -144,19 +141,19 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
         for key in extra_keys:
             diagnostics.append(
                 Diagnostic(
-                    range=view.path2element[(*path, key)].key,
+                    range=view.keys[(*path, key)],
                     message=f"Argument `{key}` is not recognized by `{factory.name}` and will be ignored.",
                     severity=DiagnosticSeverity.Warning,
                     source="confit-lsp",
                 )
             )
 
-        factory_element = view.path2element[(*path, "factory")]
+        factory_element = view.keys[(*path, "factory")]
         missing_keys = required_model_keys - root_keys
         for key in missing_keys:
             diagnostics.append(
                 Diagnostic(
-                    range=factory_element.key,
+                    range=factory_element,
                     message=f"Argument `{key}` is missing.",
                     severity=DiagnosticSeverity.Error,
                     source="confit-lsp",
@@ -172,13 +169,13 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
             target = view.references.get(total_path)
 
             if target is not None:
-                element = view.path2element[total_path]
+                element = view.keys[total_path]
                 try:
                     view.get_value(target)
                 except KeyError:
                     diagnostics.append(
                         Diagnostic(
-                            range=element.value,
+                            range=element,
                             message="No element with this key exists.",
                             severity=DiagnosticSeverity.Error,
                             source="confit-lsp",
@@ -196,7 +193,7 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
                 if sub_factory_descriptor.return_type != info.annotation:
                     diagnostics.append(
                         Diagnostic(
-                            range=factory_element.key,
+                            range=factory_element,
                             message=(
                                 f"Argument `{key}` is provided by a factory with incompatible type.\n"
                                 f"Expected `{info.annotation.__qualname__}`, got `{sub_factory_descriptor.return_type.__qualname__}`."
@@ -211,12 +208,12 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
                 adapter = TypeAdapter(info.annotation)
                 adapter.validate_python(value)
             except ValidationError as e:
-                element = view.path2element[total_path]
+                element = view.keys[total_path]
                 for error in e.errors():
                     msg = error["msg"]
                     diagnostics.append(
                         Diagnostic(
-                            range=element.value,
+                            range=element,
                             message=f"Argument `{key}` has incompatible type.\n{msg}",
                             severity=DiagnosticSeverity.Error,
                             source="confit-lsp",
@@ -297,7 +294,8 @@ async def hover(ls: ConfitLanguageServer, params: HoverParams) -> Optional[Hover
     if element is None:
         return None
 
-    *path, key = element.path
+    _, path = element
+    *path, key = path
     root = view.get_object(path)
 
     factory_name = root.get("factory")
@@ -316,13 +314,7 @@ async def hover(ls: ConfitLanguageServer, params: HoverParams) -> Optional[Hover
         return Hover(
             contents=MarkupContent(
                 kind=MarkupKind.Markdown,
-                value=f"**Factory: {factory_name}**\n\n{description.docstring}\n\n"
-                + "\n".join(
-                    (
-                        f"- {field_name}\n"
-                        for field_name in description.input_model.model_fields.keys()
-                    )
-                ),
+                value=f"**Factory: {factory_name}**\n\n{description.docstring}",
             )
         )
 
@@ -341,8 +333,9 @@ async def hover(ls: ConfitLanguageServer, params: HoverParams) -> Optional[Hover
 
 @server.feature(TEXT_DOCUMENT_DEFINITION)
 async def definition(
-    ls: ConfitLanguageServer, params: DefinitionParams
-) -> Optional[Location]:
+    ls: ConfitLanguageServer,
+    params: DefinitionParams,
+) -> Location | None:
     doc = ls.workspace.get_text_document(params.text_document.uri)
     view = ls.parse(doc)
 
@@ -352,30 +345,21 @@ async def definition(
     cursor = params.position
     element = view.get_element_from_position(cursor)
 
-    if element is None:
-        return None
+    match element:
+        case ("value", path):
+            pass
+        case _:
+            return None
 
-    if element.path in view.references:
-        target = view.references[element.path]
-        elements = [
-            element
-            for element in view.elements
-            if target == element.path[: len(target)]
-        ]
+    target = view.references.get(path)
+    if target is not None:
+        return Location(uri=doc.uri, range=view.keys[target])
 
-        if elements:
-            return Location(uri=doc.uri, range=elements[0].key)
-        return None
-
-    *path, key = element.path
-
-    if key != "factory":
+    if path[-1] != "factory":
         # TODO: go to the definition of the argument
         return None
 
-    root = view.get_object(path)
-
-    factory_name = root.get("factory")
+    factory_name = view.get_value(path)
 
     if factory_name is None:
         return None
@@ -405,10 +389,13 @@ async def completion(
     cursor = params.position
     element = view.get_element_from_position(cursor)
 
-    if element is None:
-        return None
+    match element:
+        case ("value", path):
+            pass
+        case _:
+            return None
 
-    *_, key = element.path
+    *_, key = path
 
     if key != "factory":
         return None
@@ -452,41 +439,32 @@ def inlay_hints(
 
     hints = list[InlayHint]()
 
-    start_line = params.range.start.line
-    end_line = params.range.end.line
+    start = params.range.start
+    end = params.range.end
 
     factories = dict[ElementPath, FunctionDescription]()
-    for element in view.elements:
-        if element.path[-1] != "factory":
-            continue
-        factory_name = view.get_value(element.path)
+    for path in view.factories():
+        factory_name = view.get_value((*path, "factory"))
         factory = REGISTRY.get(factory_name)
 
         if factory is None:
             continue
 
-        factories[element.path[:-1]] = FunctionDescription.from_function(
-            factory_name, factory
-        )
+        factories[path] = FunctionDescription.from_function(factory_name, factory)
 
-    elements = list[Element]()
-    for element in view.elements:
-        if element.path[-1] == "factory":
+    for path, location in view.keys.items():
+        if location.start > end or start > location.end:
             continue
 
-        if element.path[:-1] not in factories:
+        path, key = path[:-1], path[-1]
+
+        if key == "factory":
             continue
 
-        if end_line <= element.key.start.line or element.value.end.line <= start_line:
+        factory = factories.get(path)
+
+        if factory is None:
             continue
-
-        elements.append(element)
-
-    for element in elements:
-        key = element.path[-1]
-        path = element.path[:-1]
-
-        factory = factories[path]
 
         field_info = factory.input_model.model_fields.get(key)
 
@@ -507,7 +485,7 @@ def inlay_hints(
                 kind=InlayHintKind.Type,
                 padding_left=False,
                 padding_right=False,
-                position=element.key.end,
+                position=location.end,
             )
         )
 
