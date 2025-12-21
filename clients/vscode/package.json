@@ -9,7 +9,8 @@
     "vscode": "^1.106.1"
   },
   "repository": {
-    "url": "https://github.com/bdura/confit-lite"
+    "url": "https://github.com/bdura/confit-lite",
+    "directory": "clients/vscode"
   },
   "categories": [
     "Programming Languages",
