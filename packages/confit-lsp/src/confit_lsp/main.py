@@ -96,6 +96,7 @@ def validate_config(view: ConfigurationView) -> list[Diagnostic]:
     factories = dict[ElementPath, FunctionDescription]()
 
     for path in view.factories():
+        path = (*path, "factory")
         location = view.values[path]
         factory_name = view.get_value(path)
 
