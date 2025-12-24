@@ -1,13 +1,17 @@
 from dataclasses import dataclass
 from functools import cached_property
+import logging
 from typing import Any, Literal, Self, Sequence, assert_never
 from lsprotocol.types import Position, Range
 import rtoml
 
 from collections import deque
 
+
 from .parsers import parse_toml
 from .parsers import ElementPath
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,7 +31,9 @@ class ConfigurationView:
 
         for path, location in self.keys.items():
             if (value := self.values.get(path)) is not None:
+                location = Range(start=location.start, end=value.end)
                 location.end = value.end
+            result.append((path, location))
 
         return result
 
