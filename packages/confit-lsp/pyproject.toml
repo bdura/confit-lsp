@@ -12,6 +12,7 @@ dependencies = [
     "confit-lite",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
+    "pydantic-settings>=2.12.0",
 ]
 
 [project.scripts]
